@@ -21,11 +21,11 @@ class BaseZendesk(object):
     URL = 'https://%s.zendesk.com%s'
 
     source_client = Zenpy(email=ZENDESK_SOURCE_EMAIL,
-                          password=ZENDESK_SOURCE_PASSWORD,
+                          token=ZENDESK_SOURCE_PASSWORD,
                           subdomain=SOURCE_INSTANCE)
 
     target_client = Zenpy(email=ZENDESK_TARGET_EMAIL,
-                          password=ZENDESK_TARGET_PASSWORD,
+                          token=ZENDESK_TARGET_PASSWORD,
                           subdomain=TARGET_INSTANCE)
 
     source_auth = requests.auth.HTTPBasicAuth(ZENDESK_SOURCE_EMAIL, ZENDESK_SOURCE_PASSWORD)
