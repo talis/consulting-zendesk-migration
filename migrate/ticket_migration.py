@@ -26,6 +26,7 @@ import tempfile
 import requests
 import time
 
+from io import BytesIO
 from zenpy.lib.api_objects import Ticket, Comment
 from zenpy.lib.exception import APIException, ZenpyException
 
@@ -35,12 +36,14 @@ from base_migration import BaseMigration
 class TicketMigration(BaseMigration):
 
     TICKET_ERRORS_LOG = 'ticket_errors.log'
-    TICKET_START_TIME = os.getenv('ZENDESK_TICKET_START_TIME', 1262304000)
+    TICKET_START_TIME = os.getenv('ZENDESK_TICKET_START_TIME', 1609459200)
+    MIGRATION_TAG = os.getenv('ZENDESK_MIGRATION_TAG', 'migrated')
 
     def main(self, action='migrate', **kwargs):
         start = time.time()
 
-        os.remove(self.TICKET_ERRORS_LOG)
+        if os.path.exists(self.TICKET_ERRORS_LOG):
+            os.remove(self.TICKET_ERRORS_LOG)
         with open(self.TICKET_ERRORS_LOG, 'w+') as file:
             file.write('Ticket Migration start time %s\n' % start)
 
@@ -155,8 +158,9 @@ class TicketMigration(BaseMigration):
                         recipient=source.recipient,
                         brand_id=self.get_target_brand_id(source.brand_id))
 
-        if source.ticket_form_id:
-            ticket.ticket_form_id = self.get_target_ticket_form_id(source.ticket_form_id)
+        # Ticket Form is an Enterprise feature
+        # if source.ticket_form_id:
+            # ticket.ticket_form_id = self.get_target_ticket_form_id(source.ticket_form_id)
 
         # Organization
         org_id = source.organization_id
@@ -237,20 +241,21 @@ class TicketMigration(BaseMigration):
                             print('- DEBUG Attachment created - %s' % file_name)
                             comment_body = comment_body.replace(img_tag, '<See Attachment>')
                         else:
-                            with tempfile.TemporaryFile() as tmp_file:
-                                tmp_file.write(response.content)
-                                tmp_file.seek(0)
-                                try:
-                                    upload = self.target_client.attachments.upload(fp=tmp_file,
-                                                                                   target_name=file_name,
-                                                                                   content_type=content_type)
+                            tmp_file = BytesIO() # In-memory file object
+                            tmp_file.write(response.content)
+                            tmp_file.seek(0)
+                            tmp_file.name = file_name
+                            try:
+                                upload = self.target_client.attachments.upload(fp=tmp_file,
+                                                                                target_name=file_name,
+                                                                                content_type=content_type)
 
-                                    print('- Attachment created - %s' % file_name)
-                                    comment_body = comment_body.replace(img_tag, '[See Attachment]')
-                                    uploads.append(upload.token)
+                                print('- Attachment created - %s' % file_name)
+                                comment_body = comment_body.replace(img_tag, '[See Attachment]')
+                                uploads.append(upload.token)
 
-                                except Exception as e:
-                                    print('WARN Exception creating attachment %s - %s' % (file_name, e))
+                            except Exception as e:
+                                print('WARN Exception creating attachment %s - %s' % (file_name, e))
 
                 new_comment.html_body = comment_body
 
@@ -260,25 +265,28 @@ class TicketMigration(BaseMigration):
                 for attachment in attachments:
                     url = attachment.content_url
                     file_name = attachment.file_name
-                    content_type = attachment.content_type
+
+                    # ensure that the source zendesk account does NOT require authentication before getting the URL.
                     response = requests.get(url)
+                    content_type = response.headers.get('content-type')
 
                     if self.DEBUG:
                         print('- DEBUG Attachment created - %s' % file_name)
                     else:
-                        with tempfile.TemporaryFile() as tmp_file:
-                            tmp_file.write(response.content)
-                            tmp_file.seek(0)
-                            try:
-                                upload = self.target_client.attachments.upload(fp=tmp_file,
-                                                                               target_name=file_name,
-                                                                               content_type=content_type)
+                        tmp_file = BytesIO() # In-memory file object
+                        tmp_file.write(response.content)
+                        tmp_file.seek(0)
+                        tmp_file.name = file_name
+                        try:
+                            upload = self.target_client.attachments.upload(fp=tmp_file,
+                                                                            target_name=file_name,
+                                                                            content_type=content_type)
 
-                                print('- Attachment created - %s' % file_name)
-                                uploads.append(upload.token)
+                            print('- Attachment created - %s' % file_name)
+                            uploads.append(upload.token)
 
-                            except Exception as e:
-                                print('WARN Exception creating attachment %s - %s' % (file_name, e))
+                        except Exception as e:
+                            print('WARN Exception creating attachment %s - %s' % (file_name, e))
 
             new_comment.uploads = uploads
 
@@ -338,9 +346,14 @@ class TicketMigration(BaseMigration):
                 else:
                     print('- Problem ticket not found, creating for %s' % source_problem_id)
                     source_problem = self.source_client.tickets(id=source_problem_id)
-                    ticket.problem_id = self.migrate_ticket(source_problem)
+                    new_problem_ticket = self.migrate_ticket(source_problem)
+                    ticket.problem_id = new_problem_ticket.id
                     # Wait 60 sec for this to show up
+                    print('- Waiting 60 sec for problem ticket to show up')
                     time.sleep(60)
+
+        # Add custom migration tag to the ticket
+        ticket.tags.append(self.MIGRATION_TAG)
 
         new_ticket_id = None
         if self.DEBUG:
