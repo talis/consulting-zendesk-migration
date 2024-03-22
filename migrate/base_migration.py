@@ -33,10 +33,9 @@ class BaseMigration(BaseZendesk):
 
         # Custom mappings
         # todo - remove hard coded values and add to json
-        self.brand_cache['2379186'] = '360000762552'
-        self.brand_cache['7709868'] = '360000762552'
+        self.brand_cache["113151"] = "16612851754781" # Talis Support
 
-        self.ticket_form_cache['35363'] = '360000341912'
+        # self.ticket_form_cache['35363'] = '360000341912'
 
         # Set the original id field id
         for field in self.target_client.ticket_fields():
@@ -73,12 +72,13 @@ class BaseMigration(BaseZendesk):
     def get_target_user(self, source_user_id):
         user_id = self.user_cache.get(source_user_id)
         user = None
+        users = None
         if not user_id:
             # print('DEBUG - User cache MISS for %s' % user_id)
             source = self.source_client.users(id=source_user_id)
             if source:
-                search_val = urllib.parse.quote(source.email) if source.email else None
-                users = self.target_client.search(type='user', email=search_val)
+                if source.email is not None:  # Don't try looking up if there is no email
+                    users = self.target_client.search(type="user", email=source.email)
                 if users and len(users) > 0:
                     user = next(users)
                     user_id = user.id
@@ -86,11 +86,13 @@ class BaseMigration(BaseZendesk):
                 elif self.DEBUG:
                     print('- DEBUG Creating user: %s' % source.email)
                 else:
+                    source.tags.append('migrated')  # Tag these created users
+                    # Never create a user with a role above end user.
                     new_user = User(email=source.email,
                                     name=source.name,
                                     locale_id=source.locale_id,
                                     phone=source.phone,
-                                    role=source.role,
+                                    role='end-user',
                                     time_zone=source.time_zone,
                                     verified=source.verified,
                                     suspended=source.suspended,
@@ -104,12 +106,13 @@ class BaseMigration(BaseZendesk):
                     user_id = created_user.id
 
                     # Identities
-                    for source_identity in self.source_client.users.identities(id=source_user_id):
-                        if not source_identity.primary:
-                            identity = Identity(user_id=user_id,
-                                                type=source_identity.type,
-                                                value=source_identity.value)
-                            self.target_client.users.identities.create(user_id, identity)
+                    if source.name != 'Permanently deleted user':  # permanently deleted users have no identities in the source
+                        for source_identity in self.source_client.users.identities(id=source_user_id):
+                            if not source_identity.primary:
+                                identity = Identity(user_id=user_id,
+                                                    type=source_identity.type,
+                                                    value=source_identity.value)
+                                self.target_client.users.identities.create(user_id, identity)
 
                     user = created_user
 
