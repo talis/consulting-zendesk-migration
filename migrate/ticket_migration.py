@@ -214,10 +214,15 @@ class TicketMigration(BaseMigration):
                     do_upload = False
                     source_domain = '%s.zendesk.com' % self.SOURCE_INSTANCE
                     source_alt_domain = '%s.zendesk.com' % self.SOURCE_ALT_INSTANCE
+                    
                     if source_domain in url or source_alt_domain in url:
                         do_upload = True
                         url = url.replace(source_alt_domain, source_domain)
                     elif self.SOURCE_HELPCENTER_DOMAIN in url:
+                        # The old host mapping has moved to the new site, 
+                        # so attachment urls would be 404 every time.
+                        # We need to replace the old custom domain with the zendesk one.
+                        url = url.replace(self.SOURCE_HELPCENTER_DOMAIN, source_domain)
                         do_upload = True
 
                     if do_upload:

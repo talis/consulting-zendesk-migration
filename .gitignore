@@ -45,3 +45,4 @@ atlassian-ide-plugin.xml
 .project
 .vscode
 
+zendesk_credentials.env
